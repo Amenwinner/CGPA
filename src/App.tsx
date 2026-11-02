@@ -421,7 +421,7 @@ export default function App() {
         targetCgpa: targetCgpa.toString(),
       };
 
-      if (selectedFile && selectedFile.base64) {
+      if (selectedFile && selectedFile.base64 && !slideContent.trim()) {
         payload.fileData = {
           mimeType: selectedFile.mimeType,
           base64: selectedFile.base64,
