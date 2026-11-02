@@ -131,19 +131,23 @@ app.post('/api/studykit/generate', async (req, res) => {
   try {
     const { slideContent, slideTitle, courseCode, fileData, targetCgpa } = req.body;
 
-    if (!slideContent && !fileData) {
+    const topic = (slideTitle || '').trim();
+    const content = (slideContent || '').trim();
+    const hasFile = !!(fileData && fileData.base64);
+
+    if (!content && !hasFile && !topic) {
       return res.status(400).json({
-        error: 'Please provide slide content, lecture notes, or upload a document/slide image.',
+        error: 'Please enter a topic title, paste lecture notes, or upload presentation slides.',
       });
     }
 
     const ai = getGeminiClient();
 
     const systemInstruction = `You are an ambitious university honors student striving to boost her CGPA to 4.0 / First Class Honours.
-Your task is to analyze the provided presentation slides or lecture notes and transform them into a comprehensive, high-yield study kit consisting of exactly three distinct sections:
+Your task is to analyze the requested topic or presentation slides for ${courseCode || 'University Course'} and transform it into a comprehensive, high-yield study kit consisting of exactly three distinct sections:
 
 1. SECTION 1: COMPREHENSIVE TOPIC SUMMARY
-- Extract core themes, clear learning objectives, and major subtopics from the slides.
+- Extract core themes, clear learning objectives, and major subtopics.
 - Organize logically with Markdown headers, bullet points, and bold text for key terms.
 - Highlight critical takeaways, formulas, frameworks, and exam pitfalls.
 - Make the summary dense with high-yield exam information.
@@ -152,30 +156,39 @@ Your task is to analyze the provided presentation slides or lecture notes and tr
 - Generate between 15 and 20 essential flashcards focusing on critical terminology, core concepts, formulas, or key figures.
 - Each flashcard must follow:
   Card [Number] | Front: [Concept, Term, or Prompt]
-  Back: [Clear, precise definition or explanation based on the slides]
+  Back: [Clear, precise definition or explanation based on the syllabus/slides]
 
 3. SECTION 3: EXACTLY 40 PRACTICE QUESTIONS & DETAILED ANSWER KEY
 - Part A: Multiple Choice (Questions 1–20): Provide 4 clear options (A, B, C, D) per question with one correct answer.
 - Part B: Fill-in-the-Blank / Short Recall (Questions 21–30): Target key terms, dates, mechanisms, or quantitative values. Include the correct answer string and acceptable keyword variations.
 - Part C: Conceptual & Application (Questions 31–40): Scenario-based questions testing deeper understanding. Provide concise model answer and key grading points.
-- Answer Key for All 40 Questions: Every question MUST have its correct answer and a 1–2 sentence explanation citing the rationale from the slides.
+- Answer Key for All 40 Questions: Every question MUST have its correct answer and a 1–2 sentence explanation citing the rationale.
 
 GENERAL GUIDELINES:
-- SPEED & CONCISENESS (CRITICAL): Keep all explanations strictly to 1 direct sentence citing the slide rationale. Keep conceptual model answers to 2-3 direct sentences. Flashcards must have concise 1-2 sentence definitions. This ensures generation streams out rapidly within 35–50 seconds.
-- Rely strictly on the information presented in the provided slides. If a concept is missing or ambiguous, do not invent external facts.
-- Ensure balanced coverage across all slides.
+- SPEED & CONCISENESS (CRITICAL): Keep all explanations strictly to 1 direct sentence citing the rationale. Keep conceptual model answers to 2-3 direct sentences. Flashcards must have concise 1-2 sentence definitions. This ensures generation streams out rapidly within 35–50 seconds.
+- Ensure balanced coverage across all key syllabus aspects of the topic.
 - Maintain an encouraging, academic, and clear tone throughout.
 - Return ONLY valid JSON adhering strictly to the schema. Keep explanations concise so the complete JSON fits within limits.`;
 
-    const promptText = `Analyze the following lecture slides / presentation notes for ${courseCode || 'University Course'} (Title: ${slideTitle || 'Lecture Deck'}). Target CGPA is ${targetCgpa || '4.0'}.
-Generate the complete 3-part study kit (Summary, 15-20 Flashcards, and exactly 40 Practice Questions with Answer Key). Keep all answers and explanations concise and high-yield.
+    let promptText = '';
+    if (content || hasFile) {
+      promptText = `Analyze the provided lecture presentation slides/materials for the course "${courseCode || 'University Course'}" on the topic: "${topic || 'Lecture Deck'}". Target CGPA is ${targetCgpa || '4.0'}.
+Generate the complete 3-part study kit (Summary, 15-20 Flashcards, and exactly 40 Practice Questions with Answer Key) grounded in these lecture materials. Keep all answers and explanations concise and high-yield.
 
 SLIDE / LECTURE CONTENT:
-${slideContent || 'Please extract all slide text and visual concepts directly from the attached presentation document/image.'}
+${content || 'Please extract all slide text and visual concepts directly from the attached presentation document/image.'}
 `;
+    } else {
+      promptText = `Analyze and break down the university lecture topic: "${topic}" for the course "${courseCode || 'University Course'}" (Target CGPA: ${targetCgpa || '4.0'}).
+Generate the complete high-yield 3-part study kit based on the university curriculum for this topic:
+1. Detailed Topic Summary with learning objectives, high-yield takeaways, and critical formulas/frameworks.
+2. 15 to 20 concept flashcards.
+3. Exactly 40 practice exam questions (20 MCQs, 10 Fill-in-the-Blank, 10 Conceptual/Application) with full answer key.
+Keep all answers, questions, and explanations concise and high-yield.`;
+    }
 
     const parts: any[] = [];
-    if (fileData && fileData.base64 && fileData.mimeType) {
+    if (hasFile) {
       // Only attach supported Gemini multimodal MIME types (PDF, PNG, JPEG, WEBP)
       const mime = fileData.mimeType.toLowerCase();
       if (mime === 'application/pdf' || mime.startsWith('image/')) {

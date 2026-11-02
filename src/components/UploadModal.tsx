@@ -229,8 +229,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   };
 
   const handleGenerate = async () => {
-    if (!slideContent.trim() && !selectedFile) {
-      setErrorMessage('Please upload presentation slides (PDF/PPTX/Image) or paste your lecture notes.');
+    const hasTopic = !!slideTitle.trim();
+    const hasContent = !!slideContent.trim();
+    const hasFile = !!selectedFile;
+
+    if (!hasTopic && !hasContent && !hasFile) {
+      setErrorMessage('Please enter a presentation topic title, upload slides, or paste lecture notes.');
       return;
     }
 
@@ -719,18 +723,22 @@ Slide 1: Topic Overview & Learning Objectives
 
             <button
               onClick={handleGenerate}
-              disabled={isLoading || (!slideContent.trim() && !selectedFile)}
+              disabled={isLoading || (!slideContent.trim() && !selectedFile && !slideTitle.trim())}
               className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm shadow-lg shadow-indigo-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Analyzing Slides ({elapsedSeconds}s)...</span>
+                  <span>Analyzing &ldquo;{slideTitle || 'Topic'}&rdquo; ({elapsedSeconds}s)...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 text-amber-300" />
-                  <span>Generate Complete Study Kit</span>
+                  <span>
+                    {slideContent.trim() || selectedFile
+                      ? 'Generate Complete Study Kit'
+                      : `Analyze Topic: "${slideTitle || 'Course Topic'}"`}
+                  </span>
                 </>
               )}
             </button>

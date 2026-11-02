@@ -200,7 +200,8 @@ export default function App() {
     if (existingKit) {
       setCurrentKitId(existingKit.id);
     } else {
-      setSlideTitle(`${course.name} - Lecture Deck 1`);
+      setCurrentKitId(null);
+      setSlideTitle(`${course.name} - Core Lecture Topics`);
     }
   };
 
@@ -366,8 +367,12 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    if (!slideContent.trim() && !selectedFile) {
-      setErrorMessage('Please upload presentation slides (PDF/PPTX/Image) or paste your lecture notes.');
+    const hasTopic = !!slideTitle.trim();
+    const hasContent = !!slideContent.trim();
+    const hasFile = !!selectedFile;
+
+    if (!hasTopic && !hasContent && !hasFile) {
+      setErrorMessage('Please enter a presentation topic title, upload slides, or paste lecture notes.');
       return;
     }
 
@@ -383,12 +388,18 @@ export default function App() {
       controller.abort('timeout');
     }, 115000);
 
-    const steps = [
+    const steps = hasContent || hasFile ? [
       'Scanning slide contents & learning objectives...',
       'Synthesizing dense topic summary & formula cheat sheets...',
       'Formulating 15 to 25 core concept flashcards...',
       'Composing 40-question practice assessment (MCQs, Recall, Application)...',
       'Verifying detailed answer key with slide citations...',
+    ] : [
+      `Analyzing university topic: "${slideTitle}"...`,
+      'Extracting core curriculum themes & high-yield takeaways...',
+      'Synthesizing formulas, frameworks & 15-20 flashcards...',
+      'Composing 40 practice exam questions (MCQ, Recall, Scenario)...',
+      'Finalizing answer key & citations...',
     ];
 
     let stepIndex = 0;
@@ -664,6 +675,19 @@ export default function App() {
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>3. 40-Q Test</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setCurrentKitId(null);
+                    setSlideContent('');
+                    setSelectedFile(null);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 hover:text-white border border-indigo-500/40 font-semibold transition-all flex items-center gap-1.5 cursor-pointer ml-1"
+                >
+                  <PlusCircle className="w-3.5 h-3.5 text-amber-300" />
+                  <span className="hidden sm:inline">+ Analyze New Topic</span>
+                  <span className="sm:hidden">+ New</span>
                 </button>
 
                 <button
@@ -1055,18 +1079,22 @@ Slide 1: Porter's Five Forces in B2C Markets
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={isLoading || (!slideContent.trim() && !selectedFile)}
+                disabled={isLoading || (!slideContent.trim() && !selectedFile && !slideTitle.trim())}
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl bg-gradient-to-r from-amber-500 via-indigo-600 to-emerald-600 hover:from-amber-400 hover:to-emerald-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Analyzing Presentation Slides ({elapsedSeconds}s)...</span>
+                    <span>Analyzing &ldquo;{slideTitle || 'Topic'}&rdquo; ({elapsedSeconds}s)...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-amber-300" />
-                    <span>Generate 3-Part Study Kit (Summary, Flashcards, 40-Q Exam)</span>
+                    <span>
+                      {slideContent.trim() || selectedFile
+                        ? `Analyze Slides & Generate Study Kit`
+                        : `Analyze Topic: "${slideTitle || 'Course Deck Topic'}"`}
+                    </span>
                   </>
                 )}
               </button>
