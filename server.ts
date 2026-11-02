@@ -39,8 +39,8 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Single model call with per-attempt timeout (max 48s per model to guarantee < 2 min overall)
-async function generateWithModelTimeout(ai: GoogleGenAI, model: string, params: any, timeoutMs = 48000) {
+// Single model call with per-attempt timeout (up to 92s for primary attempt, staying under 110s total)
+async function generateWithModelTimeout(ai: GoogleGenAI, model: string, params: any, timeoutMs = 92000) {
   let timer: NodeJS.Timeout | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -51,10 +51,10 @@ async function generateWithModelTimeout(ai: GoogleGenAI, model: string, params: 
   // Optimize thinking configuration to minimize latency
   const config = { ...(params.config || {}) };
   if (model === 'gemini-3.8-flash') {
-    // Low thinking keeps reasoning under 3 seconds instead of 45+ seconds
+    // Low thinking keeps reasoning under 2-3 seconds instead of 45+ seconds
     config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
   } else if (model === 'gemini-3.1-flash-lite') {
-    // Flash lite uses minimal thinking by default for near-instant generation
+    // Flash lite uses minimal thinking for fast throughput
     config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
   }
 
@@ -71,24 +71,25 @@ async function generateWithModelTimeout(ai: GoogleGenAI, model: string, params: 
   }
 }
 
-// Helper to call Gemini with automatic fallback, guaranteed under 105s (well below 2 minutes)
+// Helper to call Gemini with automatic fallback, guaranteed under 110s (strictly below 2 minutes)
 async function generateContentWithFallback(ai: GoogleGenAI, params: any) {
-  // Ultra-fast model priority: 3.1-flash-lite (15-25s), 3.8-flash with LOW thinking (20-35s), then flash-latest
-  const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  // Use gemini-3.8-flash (with LOW thinking) as primary for fastest multimodal slide processing and high token throughput
+  const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
   let lastError: any = null;
   const startTime = Date.now();
-  const GLOBAL_DEADLINE_MS = 105000; // 105s max server budget (< 2 min total)
+  const GLOBAL_DEADLINE_MS = 110000; // 110s max server budget (guaranteed under 120s / 2 mins)
 
-  for (const model of modelsToTry) {
+  for (let i = 0; i < modelsToTry.length; i++) {
+    const model = modelsToTry[i];
     const elapsed = Date.now() - startTime;
     const remainingTime = GLOBAL_DEADLINE_MS - elapsed;
-    if (remainingTime < 15000) {
+    if (remainingTime < 12000) {
       console.warn(`[Gemini] Not enough time left in 2-min budget (${remainingTime}ms remaining), halting fallbacks.`);
       break;
     }
 
-    // Allocate up to remaining time or 48s per attempt
-    const attemptTimeout = Math.min(48000, remainingTime);
+    // First model gets up to 92s (enough to complete 40 questions + summary); fallbacks get remaining time
+    const attemptTimeout = i === 0 ? Math.min(92000, remainingTime) : Math.min(30000, remainingTime);
 
     try {
       console.log(`[Gemini] Attempting study kit generation with model: ${model} (timeout: ${Math.round(attemptTimeout / 1000)}s)...`);
@@ -160,14 +161,14 @@ Your task is to analyze the provided presentation slides or lecture notes and tr
 - Answer Key for All 40 Questions: Every question MUST have its correct answer and a 1–2 sentence explanation citing the rationale from the slides.
 
 GENERAL GUIDELINES:
-- SPEED & CONCISENESS CONSTRAINT: Keep all explanations, answers, and summaries punchy, high-yield, and direct (1-2 sentences per explanation). This ensures the analysis runs at peak speed (< 45 seconds) and never times out.
+- SPEED & CONCISENESS (CRITICAL): Keep all explanations strictly to 1 direct sentence citing the slide rationale. Keep conceptual model answers to 2-3 direct sentences. Flashcards must have concise 1-2 sentence definitions. This ensures generation streams out rapidly within 35–50 seconds.
 - Rely strictly on the information presented in the provided slides. If a concept is missing or ambiguous, do not invent external facts.
 - Ensure balanced coverage across all slides.
 - Maintain an encouraging, academic, and clear tone throughout.
 - Return ONLY valid JSON adhering strictly to the schema. Keep explanations concise so the complete JSON fits within limits.`;
 
     const promptText = `Analyze the following lecture slides / presentation notes for ${courseCode || 'University Course'} (Title: ${slideTitle || 'Lecture Deck'}). Target CGPA is ${targetCgpa || '4.0'}.
-Transform them into the complete 3-part study kit (Summary, 15-20 Flashcards, and exactly 40 Practice Questions with Answer Key).
+Generate the complete 3-part study kit (Summary, 15-20 Flashcards, and exactly 40 Practice Questions with Answer Key). Keep all answers and explanations concise and high-yield.
 
 SLIDE / LECTURE CONTENT:
 ${slideContent || 'Please extract all slide text and visual concepts directly from the attached presentation document/image.'}
