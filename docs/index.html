@@ -38,20 +38,48 @@
         }
       })();
 
-      // 3. In accordance with environment constraints: ignore WebSocket / HMR errors
-      window.addEventListener('unhandledrejection', function(event) {
-        var reason = event.reason;
-        var msg = (reason && (reason.message || reason.stack || String(reason))) || '';
-        if (msg.includes('WebSocket') || msg.includes('vite:ws') || msg.includes('@vite/client')) {
-          event.preventDefault();
+      // 3. In accordance with AI Studio environment constraints: ignore WebSocket / HMR errors
+      (function() {
+        function isViteHmrError(msg, src) {
+          var str = (String(msg || '') + ' ' + String(src || '')).toLowerCase();
+          return (
+            str.includes('@vite/client') ||
+            str.includes('vite:ws') ||
+            str.includes('websocket') ||
+            str.includes('ws://') ||
+            str.includes('wss://') ||
+            str.includes('connection refused')
+          );
         }
-      });
-      window.addEventListener('error', function(event) {
-        var msg = (event.message || '') + (event.filename || '');
-        if (msg.includes('WebSocket') || msg.includes('vite:ws') || msg.includes('@vite/client')) {
-          event.preventDefault();
-        }
-      });
+
+        window.addEventListener('error', function(event) {
+          var src = event.filename || (event.error && event.error.stack) || '';
+          if (isViteHmrError(event.message, src)) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event.reason;
+          var msg = (reason && (reason.message || reason.stack || String(reason))) || '';
+          if (isViteHmrError(msg, '')) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+
+        var prevOnError = window.onerror;
+        window.onerror = function(message, source, lineno, colno, error) {
+          if (isViteHmrError(message, source || (error && error.stack))) {
+            return true;
+          }
+          if (prevOnError) return prevOnError.apply(this, arguments);
+        };
+      })();
     </script>
     <script type="module" crossorigin src="./assets/index-DkRGusE1.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-G1uu7dwF.css">
