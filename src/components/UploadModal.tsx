@@ -265,7 +265,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      let data: any;
+      const text = await res.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        if (res.status === 404) {
+          throw new Error(
+            'Backend API route (/api/studykit/generate) was not found (HTTP 404). If you deployed to GitHub Pages, note that GitHub Pages only hosts static files and does not run Node.js servers. To use the AI generation engine, deploy your GitHub repo to a full-stack host (like Render, Railway, Fly.io, or Cloud Run) using "npm start", or run locally with "npm run dev".'
+          );
+        }
+        throw new Error(`Server returned status ${res.status}: ${text.slice(0, 150)}`);
+      }
+
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to process slides. Please verify your file or notes.');
       }
