@@ -1,0 +1,6 @@
+{
+  "name": "CGPA Booster & Slide Study Kit",
+  "description": "Transform presentation slides and lecture notes into a high-yield CGPA booster kit with structured summaries, interactive flashcards, and a 40-question practice assessment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
