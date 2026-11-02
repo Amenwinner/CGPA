@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CGPA Booster & Slide Study Kit</title>
+    <meta name="description" content="Transform presentation slides and lecture notes into a high-yield CGPA booster kit with structured summaries, interactive flashcards, and a 40-question practice assessment." />
+    <meta property="og:title" content="CGPA Booster & Slide Study Kit" />
+    <meta property="og:description" content="Transform presentation slides and lecture notes into a high-yield CGPA booster kit with structured summaries, interactive flashcards, and a 40-question practice assessment." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // 1. Ensure trailing slash on GitHub Pages so relative assets (./assets/...) resolve properly
+      (function() {
+        var l = window.location;
+        if (
+          l.hostname.endsWith('github.io') &&
+          l.pathname &&
+          !l.pathname.endsWith('/') &&
+          !l.pathname.split('/').pop().includes('.')
+        ) {
+          l.replace(l.protocol + '//' + l.host + l.pathname + '/' + l.search + l.hash);
+        }
+      })();
+
+      // 2. GitHub Pages SPA redirect handler (complements 404.html)
+      (function(l) {
+        if (l.search[1] === '/' ) {
+          var decoded = l.search.slice(1).split('&').map(function(s) { 
+            return s.replace(/~and~/g, '&')
+          }).join('?');
+          window.history.replaceState(null, null,
+            l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        }
+      }(window.location));
+
+      // 3. Fallback: If GitHub Pages serves from root without building, redirect to /docs/ or /dist/
+      (function() {
+        var l = window.location;
+        if (
+          l.hostname.endsWith('github.io') &&
+          !l.pathname.includes('/dist') &&
+          !l.pathname.includes('/docs') &&
+          !document.querySelector('script[src*="./assets/"]')
+        ) {
+          var base = l.pathname.endsWith('/') ? l.pathname : l.pathname + '/';
+          // Check if this is the unbundled root index.html
+          if (document.querySelector('script[src="/src/main.tsx"]')) {
+            l.replace(l.protocol + '//' + l.host + base + 'docs/' + l.search + l.hash);
+          }
+        }
+      })();
+
+      // 4. In accordance with environment constraints: ignore WebSocket / HMR errors
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = event.reason;
+        var msg = (reason && (reason.message || reason.stack || String(reason))) || '';
+        if (msg.includes('WebSocket') || msg.includes('vite:ws') || msg.includes('@vite/client')) {
+          event.preventDefault();
+        }
+      });
+      window.addEventListener('error', function(event) {
+        var msg = (event.message || '') + (event.filename || '');
+        if (msg.includes('WebSocket') || msg.includes('vite:ws') || msg.includes('@vite/client')) {
+          event.preventDefault();
+        }
+      });
+    </script>
+    <script type="module" crossorigin src="./assets/index-YcTIopv8.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B4AYSTtO.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+
