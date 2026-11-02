@@ -13,7 +13,19 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
-      // 1. Ensure trailing slash on GitHub Pages so relative assets (./assets/...) resolve properly
+      // 1. GitHub Pages SPA redirect handler (complements 404.html)
+      (function(l) {
+        if (l.search[1] === '/' ) {
+          var decoded = l.search.slice(1).split('&').map(function(s) { 
+            return s.replace(/~and~/g, '&')
+          }).join('?');
+          window.history.replaceState(null, null,
+            l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        }
+      }(window.location));
+
+      // 2. Ensure trailing slash on GitHub Pages root subpaths so relative assets resolve properly
       (function() {
         var l = window.location;
         if (
@@ -26,36 +38,7 @@
         }
       })();
 
-      // 2. GitHub Pages SPA redirect handler (complements 404.html)
-      (function(l) {
-        if (l.search[1] === '/' ) {
-          var decoded = l.search.slice(1).split('&').map(function(s) { 
-            return s.replace(/~and~/g, '&')
-          }).join('?');
-          window.history.replaceState(null, null,
-            l.pathname.slice(0, -1) + decoded + l.hash
-          );
-        }
-      }(window.location));
-
-      // 3. Fallback: If GitHub Pages serves from root without building, redirect to /docs/ or /dist/
-      (function() {
-        var l = window.location;
-        if (
-          l.hostname.endsWith('github.io') &&
-          !l.pathname.includes('/dist') &&
-          !l.pathname.includes('/docs') &&
-          !document.querySelector('script[src*="./assets/"]')
-        ) {
-          var base = l.pathname.endsWith('/') ? l.pathname : l.pathname + '/';
-          // Check if this is the unbundled root index.html
-          if (document.querySelector('script[src="/src/main.tsx"]')) {
-            l.replace(l.protocol + '//' + l.host + base + 'docs/' + l.search + l.hash);
-          }
-        }
-      })();
-
-      // 4. In accordance with environment constraints: ignore WebSocket / HMR errors
+      // 3. In accordance with environment constraints: ignore WebSocket / HMR errors
       window.addEventListener('unhandledrejection', function(event) {
         var reason = event.reason;
         var msg = (reason && (reason.message || reason.stack || String(reason))) || '';
@@ -71,9 +54,38 @@
       });
     </script>
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
+    <div id="root">
+      <div id="loading-spinner" style="min-height: 100vh; background-color: #020617; color: #94a3b8; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, -apple-system, sans-serif; padding: 24px; text-align: center;">
+        <div style="width: 52px; height: 52px; border-radius: 14px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+        </div>
+        <h2 style="font-size: 19px; font-weight: 700; color: #ffffff; margin: 0 0 8px 0; letter-spacing: -0.02em;">CGPA Booster & Slide Study Kit</h2>
+        <p style="font-size: 13px; max-width: 380px; margin: 0 0 16px 0; line-height: 1.5; color: #94a3b8;">Loading 6 University Course Decks, Interactive Flashcards & 40-Question Assessment...</p>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #6366f1; animation: pulse 1.5s infinite;"></span>
+          <span style="font-size: 11px; color: #64748b; font-weight: 500;">Initializing academic environment</span>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Fallback: If deployed to GitHub Pages without running Vite build, redirect to pre-built /docs/
+      (function() {
+        if (window.location.hostname.endsWith('github.io')) {
+          setTimeout(function() {
+            var spinner = document.getElementById('loading-spinner');
+            if (spinner && document.body.contains(spinner)) {
+              var path = window.location.pathname;
+              if (!path.includes('/docs') && !path.includes('/dist')) {
+                var target = path.replace(/\/$/, '') + '/docs/' + window.location.search + window.location.hash;
+                window.location.replace(target);
+              }
+            }
+          }, 1200);
+        }
+      })();
+    </script>
   </body>
 </html>
 
