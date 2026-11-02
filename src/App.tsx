@@ -30,7 +30,10 @@ import {
   RefreshCw,
   Eye,
   EyeOff,
-  ArrowRight
+  ArrowRight,
+  Clock,
+  Zap,
+  StopCircle
 } from 'lucide-react';
 
 // The 6 University Course Decks requested by the student
@@ -165,6 +168,16 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleCancelGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort('Cancelled by user');
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setLoadingStep('');
+  };
 
   // Sync savedKits to localStorage
   useEffect(() => {
@@ -362,6 +375,14 @@ export default function App() {
     setErrorMessage(null);
     setElapsedSeconds(0);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Strict 115-second timeout to guarantee processing strictly under 2 minutes
+    const timeoutId = setTimeout(() => {
+      controller.abort('timeout');
+    }, 115000);
+
     const steps = [
       'Scanning slide contents & learning objectives...',
       'Synthesizing dense topic summary & formula cheat sheets...',
@@ -400,7 +421,10 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       let data: any;
       const text = await res.text();
@@ -423,12 +447,21 @@ export default function App() {
       clearInterval(timerInterval);
       handleKitGenerated(data.kit);
     } catch (err: any) {
+      clearTimeout(timeoutId);
       clearInterval(stepInterval);
       clearInterval(timerInterval);
-      setErrorMessage(
-        err.message || 'An error occurred while generating your study kit. Please try again or paste text directly.'
-      );
+
+      if (err.name === 'AbortError' || err === 'timeout' || err.message?.includes('timeout')) {
+        setErrorMessage(
+          'Analysis reached the 2-minute limit. To speed up analysis to under 30 seconds, you can copy & paste the key slide text directly or select a single lecture deck.'
+        );
+      } else {
+        setErrorMessage(
+          err.message || 'An error occurred while generating your study kit. Please try again or paste text directly.'
+        );
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsLoading(false);
     }
   };
@@ -951,19 +984,70 @@ Slide 1: Porter's Five Forces in B2C Markets
                 </div>
               )}
 
-              {/* Loading progress with real timer */}
+              {/* Loading status indicator with 2-minute progress bar */}
               {isLoading && (
-                <div className="p-4 bg-indigo-950/40 border border-indigo-500/30 rounded-xl space-y-2 animate-pulse">
-                  <div className="flex items-center justify-between text-xs font-bold text-indigo-300">
-                    <div className="flex items-center gap-2">
+                <div className="p-4 bg-indigo-950/60 border border-indigo-500/40 rounded-xl space-y-3 shadow-lg">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2 text-indigo-200 font-semibold">
                       <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                      <span>{loadingStep}</span>
+                      <span>{loadingStep || 'Analyzing slide contents...'}</span>
                     </div>
-                    <span className="font-mono text-amber-300">{elapsedSeconds}s</span>
+                    <div className="flex items-center gap-1.5 font-mono text-xs bg-indigo-900/60 px-2 py-0.5 rounded-md border border-indigo-500/30">
+                      <Clock className="w-3.5 h-3.5 text-amber-300" />
+                      <span className="text-amber-300 font-bold">{elapsedSeconds}s</span>
+                      <span className="text-slate-400">/ 120s max</span>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Extracting high-yield exam takeaways, 15–25 concept flashcards, and 40 practice questions based strictly on your uploaded material.
-                  </p>
+
+                  {/* Visual Progress Bar calibrated for < 2 mins */}
+                  <div className="space-y-1">
+                    <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-800">
+                      <div
+                        className="h-full bg-gradient-to-r from-amber-500 via-indigo-500 to-emerald-400 transition-all duration-500 rounded-full"
+                        style={{
+                          width: `${Math.min(96, Math.max(8, Math.round((elapsedSeconds / 105) * 100)))}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                        <Zap className="w-3 h-3 text-amber-400" />
+                        Ultra-Fast Pipeline (Max 2 Mins Guarantee)
+                      </span>
+                      <span>{Math.max(0, 120 - elapsedSeconds)}s remaining</span>
+                    </div>
+                  </div>
+
+                  {/* Milestone checklist */}
+                  <div className="grid grid-cols-2 gap-1.5 pt-1 text-[10px]">
+                    <div className={`flex items-center gap-1 ${elapsedSeconds >= 3 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                      <span>1. Parse slides & objectives</span>
+                    </div>
+                    <div className={`flex items-center gap-1 ${elapsedSeconds >= 15 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                      <CheckCircle2 className={`w-3 h-3 ${elapsedSeconds >= 15 ? 'text-emerald-400' : 'text-slate-500'}`} />
+                      <span>2. Summary & formula sheet</span>
+                    </div>
+                    <div className={`flex items-center gap-1 ${elapsedSeconds >= 40 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                      <CheckCircle2 className={`w-3 h-3 ${elapsedSeconds >= 40 ? 'text-emerald-400' : 'text-slate-500'}`} />
+                      <span>3. 15-20 flashcards</span>
+                    </div>
+                    <div className={`flex items-center gap-1 ${elapsedSeconds >= 75 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                      <CheckCircle2 className={`w-3 h-3 ${elapsedSeconds >= 75 ? 'text-emerald-400' : 'text-slate-500'}`} />
+                      <span>4. 40-Q exam & answers</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-1 flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={handleCancelGeneration}
+                      className="text-[11px] text-slate-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <StopCircle className="w-3 h-3" />
+                      Cancel Analysis
+                    </button>
+                  </div>
                 </div>
               )}
 

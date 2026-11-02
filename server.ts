@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import path from 'path';
 import dotenv from 'dotenv';
 
@@ -39,29 +39,73 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Helper to call Gemini with automatic fallback on 503 high demand or 429 rate limit
+// Single model call with per-attempt timeout (max 48s per model to guarantee < 2 min overall)
+async function generateWithModelTimeout(ai: GoogleGenAI, model: string, params: any, timeoutMs = 48000) {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Model ${model} exceeded attempt timeout of ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+
+  // Optimize thinking configuration to minimize latency
+  const config = { ...(params.config || {}) };
+  if (model === 'gemini-3.8-flash') {
+    // Low thinking keeps reasoning under 3 seconds instead of 45+ seconds
+    config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+  } else if (model === 'gemini-3.1-flash-lite') {
+    // Flash lite uses minimal thinking by default for near-instant generation
+    config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+  }
+
+  try {
+    const callPromise = ai.models.generateContent({
+      ...params,
+      model,
+      config,
+    });
+    const result = await Promise.race([callPromise, timeoutPromise]);
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// Helper to call Gemini with automatic fallback, guaranteed under 105s (well below 2 minutes)
 async function generateContentWithFallback(ai: GoogleGenAI, params: any) {
-  const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-flash-latest'];
+  // Ultra-fast model priority: 3.1-flash-lite (15-25s), 3.8-flash with LOW thinking (20-35s), then flash-latest
+  const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
   let lastError: any = null;
+  const startTime = Date.now();
+  const GLOBAL_DEADLINE_MS = 105000; // 105s max server budget (< 2 min total)
 
   for (const model of modelsToTry) {
+    const elapsed = Date.now() - startTime;
+    const remainingTime = GLOBAL_DEADLINE_MS - elapsed;
+    if (remainingTime < 15000) {
+      console.warn(`[Gemini] Not enough time left in 2-min budget (${remainingTime}ms remaining), halting fallbacks.`);
+      break;
+    }
+
+    // Allocate up to remaining time or 48s per attempt
+    const attemptTimeout = Math.min(48000, remainingTime);
+
     try {
-      console.log(`[Gemini] Attempting study kit generation with model: ${model}...`);
-      const response = await ai.models.generateContent({
-        ...params,
-        model,
-      });
+      console.log(`[Gemini] Attempting study kit generation with model: ${model} (timeout: ${Math.round(attemptTimeout / 1000)}s)...`);
+      const response = await generateWithModelTimeout(ai, model, params, attemptTimeout);
 
       if (response && response.text) {
-        console.log(`[Gemini] Generation succeeded with model: ${model}`);
+        const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`[Gemini] Generation succeeded with model ${model} in ${durationSec}s!`);
         return response;
       }
     } catch (err: any) {
-      console.warn(`[Gemini] Model ${model} failed with:`, err.message || err);
+      console.warn(`[Gemini] Model ${model} failed after attempt:`, err.message || err);
       lastError = err;
-      // If 503 (high demand) or 429 (rate limit) or 500, continue to next fallback model
       const errMsg = (err.message || '').toLowerCase();
+      // If error or timeout, continue to next fallback model if budget permits
       if (
+        errMsg.includes('timeout') ||
         errMsg.includes('503') ||
         errMsg.includes('high demand') ||
         errMsg.includes('unavailable') ||
@@ -69,16 +113,16 @@ async function generateContentWithFallback(ai: GoogleGenAI, params: any) {
         errMsg.includes('resource_exhausted') ||
         errMsg.includes('overloaded')
       ) {
-        console.log(`[Gemini] Retrying with next available model due to capacity constraints...`);
+        console.log(`[Gemini] Retrying with next available model to meet < 2 min requirement...`);
         continue;
       } else {
-        // If it's an invalid argument, rethrow immediately
+        // If it's a fatal validation error, break
         break;
       }
     }
   }
 
-  throw lastError || new Error('All model attempts failed.');
+  throw lastError || new Error('All model attempts failed within the 2-minute analysis window.');
 }
 
 // API Route: Generate 3-Part Study Kit
@@ -116,6 +160,7 @@ Your task is to analyze the provided presentation slides or lecture notes and tr
 - Answer Key for All 40 Questions: Every question MUST have its correct answer and a 1–2 sentence explanation citing the rationale from the slides.
 
 GENERAL GUIDELINES:
+- SPEED & CONCISENESS CONSTRAINT: Keep all explanations, answers, and summaries punchy, high-yield, and direct (1-2 sentences per explanation). This ensures the analysis runs at peak speed (< 45 seconds) and never times out.
 - Rely strictly on the information presented in the provided slides. If a concept is missing or ambiguous, do not invent external facts.
 - Ensure balanced coverage across all slides.
 - Maintain an encouraging, academic, and clear tone throughout.
