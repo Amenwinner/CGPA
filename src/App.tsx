@@ -166,9 +166,12 @@ export default function App() {
   const [loadingStep, setLoadingStep] = useState('');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [rateLimitTimer, setRateLimitTimer] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
 
   const handleCancelGeneration = () => {
     if (abortControllerRef.current) {
@@ -187,6 +190,20 @@ export default function App() {
       console.error('Could not save kits to local storage', e);
     }
   }, [savedKits]);
+
+  // Rate limit countdown effect
+  useEffect(() => {
+    if (rateLimitTimer <= 0) {
+      if (isRateLimited) {
+        setIsRateLimited(false);
+      }
+      return;
+    }
+    const timer = setInterval(() => {
+      setRateLimitTimer((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [rateLimitTimer, isRateLimited]);
 
   // Handle course slot change
   const handleSelectCourse = (course: TargetCourse) => {
@@ -451,26 +468,82 @@ export default function App() {
       }
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to process slides. Please verify your file or paste slide text.');
+        const rawErrStr = (data.error || '') + ' ' + (typeof data === 'object' ? JSON.stringify(data) : '');
+        const isQuota =
+          data.rateLimited ||
+          res.status === 429 ||
+          rawErrStr.includes('429') ||
+          rawErrStr.includes('RESOURCE_EXHAUSTED') ||
+          rawErrStr.includes('quota') ||
+          rawErrStr.includes('rate-limit');
+
+        if (isQuota) {
+          setIsRateLimited(true);
+          const delay = data.retryAfter || 30;
+          setRateLimitTimer(delay);
+          let friendlyMsg = data.error || `Gemini Free Tier quota limit reached. Quota resets in ~${delay}s.`;
+          try {
+            const parsed = JSON.parse(friendlyMsg);
+            if (parsed?.error?.message) friendlyMsg = parsed.error.message;
+          } catch {}
+          setErrorMessage(friendlyMsg);
+          setTimeout(() => {
+            errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 100);
+          return;
+        }
+
+        let errMsg = data.error || 'Failed to process slides. Please verify your file or paste slide text.';
+        try {
+          const parsed = JSON.parse(errMsg);
+          if (parsed?.error?.message) errMsg = parsed.error.message;
+        } catch {}
+        throw new Error(errMsg);
       }
 
       clearInterval(stepInterval);
       clearInterval(timerInterval);
+      setErrorMessage(null);
+      setIsRateLimited(false);
       handleKitGenerated(data.kit);
     } catch (err: any) {
       clearTimeout(timeoutId);
       clearInterval(stepInterval);
       clearInterval(timerInterval);
 
-      if (err.name === 'AbortError' || err === 'timeout' || err.message?.includes('timeout')) {
+      const errStr = (err.message || '') + ' ' + String(err);
+      const isQuota =
+        errStr.includes('429') ||
+        errStr.includes('RESOURCE_EXHAUSTED') ||
+        errStr.includes('quota') ||
+        errStr.includes('rate-limit') ||
+        errStr.includes('rate_limit');
+
+      if (isQuota) {
+        setIsRateLimited(true);
+        if (rateLimitTimer === 0) setRateLimitTimer(30);
+        let msg = 'Gemini Free Tier quota reached (requests per minute limit). Please wait for the countdown to complete or click Retry.';
+        try {
+          const parsed = JSON.parse(err.message);
+          if (parsed?.error?.message) msg = parsed.error.message;
+        } catch {}
+        setErrorMessage(msg);
+      } else if (err.name === 'AbortError' || err === 'timeout' || err.message?.includes('timeout')) {
         setErrorMessage(
           'Analysis reached the 2-minute limit. To speed up analysis to under 30 seconds, you can copy & paste the key slide text directly or select a single lecture deck.'
         );
       } else {
-        setErrorMessage(
-          err.message || 'An error occurred while generating your study kit. Please try again or paste text directly.'
-        );
+        let msg = err.message || 'An error occurred while generating your study kit. Please try again or paste text directly.';
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed?.error?.message) msg = parsed.error.message;
+        } catch {}
+        setErrorMessage(msg);
       }
+
+      setTimeout(() => {
+        errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
     } finally {
       abortControllerRef.current = null;
       setIsLoading(false);
@@ -516,6 +589,103 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-7 space-y-6">
+
+        {/* Prominent Global Error / Rate Limit Alert Box */}
+        {errorMessage && (
+          <div
+            ref={errorRef}
+            className={`p-4 sm:p-5 rounded-2xl border transition-all shadow-xl animate-fadeIn ${
+              isRateLimited
+                ? 'bg-amber-950/40 border-amber-500/50 text-amber-200 shadow-amber-950/30'
+                : 'bg-rose-950/40 border-rose-500/50 text-rose-200 shadow-rose-950/30'
+            }`}
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    isRateLimited
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  {isRateLimited ? (
+                    <Clock className="w-5 h-5 animate-pulse text-amber-400" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-rose-400" />
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                        isRateLimited
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      }`}
+                    >
+                      {isRateLimited ? 'Quota Limit (Free Tier)' : 'Processing Alert'}
+                    </span>
+                    {isRateLimited && rateLimitTimer > 0 && (
+                      <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                        Quota resets in {rateLimitTimer}s
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-xs sm:text-sm font-semibold text-white">
+                    {errorMessage}
+                  </p>
+
+                  {isRateLimited && (
+                    <p className="text-[11px] text-amber-300/80">
+                      Gemini Free Tier has a requests-per-minute quota limit. We automatically try fallback models, and the quota resets completely every 60 seconds.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={isLoading}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm ${
+                    isRateLimited
+                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold'
+                      : 'bg-rose-600 hover:bg-rose-500 text-white'
+                  }`}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                  <span>{isRateLimited && rateLimitTimer > 0 ? `Retry (${rateLimitTimer}s)` : 'Retry Generation'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMessage(null);
+                    setIsRateLimited(false);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-300 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+
+            {/* Countdown Progress Bar for Rate Limit */}
+            {isRateLimited && rateLimitTimer > 0 && (
+              <div className="mt-3 w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-amber-500/20">
+                <div
+                  className="h-full bg-amber-400 transition-all duration-1000 rounded-full"
+                  style={{ width: `${Math.min(100, Math.max(5, (rateLimitTimer / 30) * 100))}%` }}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 6 Core University Course Decks Bar */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-3">
@@ -975,30 +1145,71 @@ Slide 1: Porter's Five Forces in B2C Markets
                 </div>
               )}
 
-              {/* Error Callout with Recovery Buttons */}
+              {/* Error Callout or Rate Limit Box with Recovery Buttons */}
               {errorMessage && (
-                <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl space-y-2 text-xs text-rose-300">
+                <div
+                  className={`p-4 rounded-xl space-y-2.5 text-xs border transition-all ${
+                    isRateLimited
+                      ? 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+                      : 'bg-rose-500/10 border border-rose-500/30 text-rose-300'
+                  }`}
+                >
                   <div className="flex items-start gap-2.5">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    {isRateLimited ? (
+                      <Clock className="w-4 h-4 shrink-0 text-amber-400 animate-pulse mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    )}
                     <div className="space-y-1">
-                      <p className="font-semibold text-rose-200">Processing Failed</p>
+                      <div className="flex items-center gap-2">
+                        <p className={`font-semibold ${isRateLimited ? 'text-amber-200' : 'text-rose-200'}`}>
+                          {isRateLimited ? 'Free Tier Rate Limit (Quota Exceeded)' : 'Processing Failed'}
+                        </p>
+                        {isRateLimited && rateLimitTimer > 0 && (
+                          <span className="text-[11px] font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                            Resets in {rateLimitTimer}s
+                          </span>
+                        )}
+                      </div>
                       <p>{errorMessage}</p>
+                      {isRateLimited && (
+                        <p className="text-[11px] text-amber-300/80">
+                          Free tier models limit requests to 15 per minute. This quota resets automatically in under a minute.
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 pt-1 pl-6">
+
+                  {/* Progress bar for rate limit */}
+                  {isRateLimited && rateLimitTimer > 0 && (
+                    <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-amber-500/20">
+                      <div
+                        className="h-full bg-amber-400 transition-all duration-1000 rounded-full"
+                        style={{ width: `${Math.min(100, Math.max(5, (rateLimitTimer / 30) * 100))}%` }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3 pt-1">
                     <button
                       type="button"
                       onClick={handleGenerate}
-                      className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-semibold text-xs flex items-center gap-1.5 cursor-pointer"
+                      disabled={isLoading}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                        isRateLimited
+                          ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold'
+                          : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-200'
+                      }`}
                     >
-                      <RefreshCw className="w-3 h-3" />
-                      Retry Generation
+                      <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+                      <span>{isRateLimited && rateLimitTimer > 0 ? `Retry (${rateLimitTimer}s)` : 'Retry Generation'}</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedFile(null);
                         setErrorMessage(null);
+                        setIsRateLimited(false);
                       }}
                       className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
                     >

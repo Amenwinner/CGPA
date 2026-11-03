@@ -73,23 +73,24 @@ async function generateWithModelTimeout(ai: GoogleGenAI, model: string, params: 
 
 // Helper to call Gemini with automatic fallback
 async function generateContentWithFallback(ai: GoogleGenAI, params: any, label = 'Study Kit') {
-  // Use gemini-3.8-flash (with LOW thinking) as primary for fastest multimodal slide processing and high token throughput
-  const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  // Model priority: gemini-2.5-flash (15 RPM quota), gemini-3.1-flash-lite (15 RPM quota), gemini-flash-latest (15 RPM quota), gemini-3.8-flash (5 RPM quota)
+  // This provides 50 requests/min total headroom across separate quota buckets instead of bottlenecking on 5 RPM!
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
   let lastError: any = null;
   const startTime = Date.now();
-  const GLOBAL_DEADLINE_MS = 100000; // 100s ceiling (< 2 mins)
+  const GLOBAL_DEADLINE_MS = 95000; // 95s ceiling (< 2 mins)
 
   for (let i = 0; i < modelsToTry.length; i++) {
     const model = modelsToTry[i];
     const elapsed = Date.now() - startTime;
     const remainingTime = GLOBAL_DEADLINE_MS - elapsed;
-    if (remainingTime < 10000) {
+    if (remainingTime < 8000) {
       console.warn(`[Gemini] [${label}] Insufficient time left (${remainingTime}ms remaining), halting fallbacks.`);
       break;
     }
 
-    // Give primary model up to 65s (more than double the ~20-30s needed for parallel chunks)
-    const attemptTimeout = i === 0 ? Math.min(65000, remainingTime) : Math.min(25000, remainingTime);
+    // Allocate up to 50s per attempt
+    const attemptTimeout = Math.min(50000, remainingTime);
 
     try {
       console.log(`[Gemini] [${label}] Attempting with model: ${model} (timeout: ${Math.round(attemptTimeout / 1000)}s)...`);
@@ -103,17 +104,30 @@ async function generateContentWithFallback(ai: GoogleGenAI, params: any, label =
     } catch (err: any) {
       console.warn(`[Gemini] [${label}] Model ${model} failed after attempt:`, err.message || err);
       lastError = err;
-      const errMsg = (err.message || '').toLowerCase();
-      if (
-        errMsg.includes('timeout') ||
-        errMsg.includes('503') ||
-        errMsg.includes('high demand') ||
-        errMsg.includes('unavailable') ||
-        errMsg.includes('429') ||
-        errMsg.includes('resource_exhausted') ||
-        errMsg.includes('overloaded')
-      ) {
-        console.log(`[Gemini] [${label}] Retrying with next available fallback model...`);
+      const errStr = (err.message || '') + ' ' + (typeof err === 'object' ? JSON.stringify(err) : String(err));
+      const isRateLimit =
+        err.status === 429 ||
+        err.statusCode === 429 ||
+        errStr.includes('429') ||
+        errStr.includes('RESOURCE_EXHAUSTED') ||
+        errStr.includes('quota') ||
+        errStr.includes('rate-limit') ||
+        errStr.includes('rate_limit');
+
+      const isRecoverable =
+        isRateLimit ||
+        errStr.includes('timeout') ||
+        errStr.includes('503') ||
+        errStr.includes('high demand') ||
+        errStr.includes('unavailable') ||
+        errStr.includes('overloaded');
+
+      if (isRecoverable) {
+        if (isRateLimit) {
+          console.log(`[Gemini] [${label}] Model ${model} hit free-tier rate limit (429). Instantly trying next model bucket...`);
+        } else {
+          console.log(`[Gemini] [${label}] Retrying with next available fallback model...`);
+        }
         continue;
       } else {
         break;
@@ -427,8 +441,44 @@ Return ONLY valid JSON matching the schema.`;
     return res.json({ success: true, kit: finalKit });
   } catch (error: any) {
     console.error('Error generating study kit:', error);
+    const errStr = (error.message || '') + ' ' + (typeof error === 'object' ? JSON.stringify(error) : String(error));
+    const isRateLimit =
+      error.status === 429 ||
+      error.statusCode === 429 ||
+      errStr.includes('429') ||
+      errStr.includes('RESOURCE_EXHAUSTED') ||
+      errStr.includes('quota') ||
+      errStr.includes('rate-limit') ||
+      errStr.includes('rate_limit');
+
+    let retryAfter = 30;
+    const retryMatch = errStr.match(/"retryDelay"\s*:\s*"(\d+)/i) || errStr.match(/retry in ([\d\.]+)s/i);
+    if (retryMatch) {
+      retryAfter = Math.min(65, Math.max(10, Math.ceil(parseFloat(retryMatch[1]))));
+    }
+
+    if (isRateLimit) {
+      return res.status(429).json({
+        success: false,
+        rateLimited: true,
+        retryAfter,
+        error: `Gemini Free Tier quota limit reached (requests per minute limit). Quota resets automatically in ~${retryAfter}s. Please wait for the countdown to complete or click Retry.`,
+      });
+    }
+
+    let cleanMsg = error.message || 'Failed to generate study kit from slides. Please try again.';
+    try {
+      const parsed = JSON.parse(cleanMsg);
+      if (parsed?.error?.message) {
+        cleanMsg = parsed.error.message;
+      }
+    } catch {
+      // Not a JSON string
+    }
+
     return res.status(500).json({
-      error: error.message || 'Failed to generate study kit from slides. Please try again.',
+      success: false,
+      error: cleanMsg,
     });
   }
 });
